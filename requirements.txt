@@ -1,0 +1,14 @@
+numpy
+pandas
+scipy
+scikit-learn
+statsmodels
+torch
+matplotlib
+simglucose
+pyyaml
+pytest
+
+# simglucose depends on the unmaintained `gym` package, which needs
+# pkg_resources (removed from setuptools>=81).
+setuptools<81

@@ -1,1 +1,30 @@
 plan.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Data (raw OhioT1DM data is under a DUA and must never be committed)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Outputs
+results/*
+!results/.gitkeep
+*.pt
+*.ckpt
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Test / tooling caches
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
