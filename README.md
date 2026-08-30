@@ -15,7 +15,7 @@ state-of-the-art model.
 
 ## Data
 
-- **[OhioT1DM](http://smarthealth.cs.ohio.edu/OhioT1DM-dataset.html)** — 6 real
+- **[OhioT1DM](http://smarthealth.cs.ohio.edu/OhioT1DM-dataset.html)** — 12 real
   type 1 diabetes patients with CGM, insulin, carbohydrates, sleep, and heart
   rate. Requires a signed data-use agreement (DUA) with Ohio University.
   Raw data is **not** included in this repository — see [Data & privacy](#data--privacy).
