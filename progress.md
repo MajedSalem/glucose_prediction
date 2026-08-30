@@ -13,12 +13,12 @@ bug was caught, it's recorded here so the reasoning isn't lost.
 | Day 0 — setup | Done (real data arrived immediately; synthetic-data fallback was skipped) |
 | Days 1–2 — data loading & task definition | Done |
 | Day 3 — evaluation harness | Done |
-| Days 4–5 — baselines | Not started |
+| Days 4–5 — baselines | Done |
 | Days 6–8 — sequence model | Not started |
 | Day 9 — error analysis | Not started |
 | Days 10–12 — writeup, polish, buffer | Not started |
 
-All 30 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
+All 39 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
 
 ## 1. Repository and environment
 
@@ -159,7 +159,75 @@ differentiator, not model sophistication.
   the not-yet-built persistence baseline) confirming sane RMSE/MAE/TIR/zone
   output with no NaNs.
 
-## 4. Known simplifications / limitations so far
+## 4. Baselines (Days 4–5)
+
+Three baselines, chosen with the user (ridge over ARIMA/Kalman — simpler
+and more reliable across 12 patients), evaluated through the Day 3 harness
+on the SAME held-out test split for a fair comparison.
+
+**Windowing — `glucose_prediction/data/windowing.py`** (new; nothing
+previously turned the cleaned CSVs into ML examples). `make_windows(df)`
+slides a fixed 24-sample (120-minute) window of `glucose` over a patient's
+DataFrame and returns `(X, y, t)`: `X` is the lag-feature matrix, `y` is a
+`{horizon_minutes: target_array}` dict, `t` is the timestamp of each
+window's last input sample. Purely positional (every processed CSV has a
+strictly regular 5-minute grid — confirmed by checking `diff().unique()`
+— so real gaps show up only as `glucose_missing=True` rows, never as
+missing grid rows). A window or target touching any missing point is
+dropped entirely, never imputed, consistent with the harness's own
+"caller filters NaN" convention. One shared validity mask applies across
+both horizons, so `y[30]` and `y[60]` always stay row-aligned with `X`.
+Implemented vectorized (`numpy.lib.stride_tricks.sliding_window_view`) —
+verified bit-identical to a naive per-window loop and ~70–90x faster.
+Valid window counts are comfortably large everywhere (e.g. 559_train:
+12082 rows → 9342 valid windows; worst case 567_train: 13537 → 8921).
+
+**Baselines — `glucose_prediction/models/baselines.py`** (new):
+- `persistence_predict(X)`: last observed value in the window, for every
+  horizon.
+- `linear_extrapolation_predict(X, horizon_minutes)`: least-squares line
+  fit per window, extrapolated forward. Implemented as closed-form batched
+  OLS (not per-window `np.polyfit`, for speed) — verified bit-identical to
+  `np.polyfit` on 200 real windows, and to two hand-computed cases.
+- `fit_ridge` / `ridge_predict`: sklearn `Ridge(alpha=1.0)`, no tuning
+  (a baseline, not a tuned model), glucose-lag features only (no
+  carbs/insulin — kept for a fair "CGM-history-only" comparison against
+  persistence/linear extrapolation; insulin/carbs as inputs is explicitly
+  deferred to the deep-model stage). One model per (patient, horizon) —
+  24 fitted models total — trained on that patient's train-split windows,
+  evaluated on that patient's test-split windows.
+
+**Runner — `scripts/run_baselines.py`**: loops all 12 patients × 2
+horizons, writes `results/baselines_per_patient.csv` (72 rows) and
+`results/baselines_summary.csv` (6 rows, mean±std across patients — the
+headline comparison). Both gitignored, like other `results/` output.
+Full run (24 CSVs loaded, windowed, 24 Ridge models fit, all three
+baselines scored): well under a second wall-clock.
+
+**Real results** (mean ± std RMSE across all 12 patients):
+
+| horizon | persistence | linear extrapolation | ridge |
+|---|---|---|---|
+| 30 min | 23.18 ± 2.83 | 38.08 ± 5.65 | **19.85 ± 2.30** |
+| 60 min | 37.99 ± 4.62 | 59.23 ± 8.61 | **33.56 ± 3.82** |
+
+Ridge beats persistence at **every one of the 12 patients, both
+horizons**. Linear extrapolation is substantially *worse* than persistence
+everywhere — per-window OLS slope amplifies CGM sensor noise into an
+overshooting trend, especially near local maxima/minima, a real and
+well-documented effect for CGM data. Reported honestly rather than tuned
+away, per `plan.md`'s own "report the persistence baseline honestly"
+guardrail — this asymmetry (a "smarter"-looking method losing to the
+naive floor) is itself a good candidate for the Day 10–11 limitations
+section.
+
+**9 new tests** in `tests/test_windowing.py` and `tests/test_baselines.py`:
+exact-value windowing tests on hand-built series (including the
+shared-validity-mask-across-horizons case), a skip-guarded real-data count
+check, exact hand-computed linear-extrapolation cases, and a Ridge smoke
+test confirming it beats a constant-mean baseline on synthetic data.
+
+## 5. Known simplifications / limitations so far
 
 (Candidates for the eventual README limitations section, Days 10–11.)
 
@@ -172,15 +240,16 @@ differentiator, not model sophistication.
   different, diabetes-type-specific boundaries and has no Zone E) was
   considered and deliberately not implemented, to keep scope to one
   well-precedented grid.
-- CGM gaps are marked, not imputed — no windowing/feature-engineering code
-  exists yet to decide how models should handle them.
+- CGM gaps are marked, not imputed — dropped entirely at window-building
+  time rather than interpolated.
+- Baselines use glucose history only, no insulin/carbs — a deliberate
+  scope boundary to keep the three-way comparison apples-to-apples;
+  insulin/carbs as model inputs is deferred to the deep-model stage.
+- Ridge uses default `alpha=1.0`, no hyperparameter search — appropriate
+  for a baseline, not for the eventual deep model.
 
-## 5. Not yet started
+## 6. Not yet started
 
-- Baselines (persistence, linear extrapolation, ARIMA/ridge, Kalman
-  filter) — Days 4–5.
-- Windowing/feature-engineering code to turn the per-patient CSVs into
-  (input window → horizon target) training examples.
 - Sequence model (LSTM/GRU, optionally a small Transformer) — Days 6–8.
 - Error analysis by regime (postprandial, overnight, hypoglycemia) — Day 9.
 - Results table, Clarke-grid figure, README results/limitations sections,
