@@ -1,6 +1,6 @@
 # Progress Log
 
-Status as of 2026-08-30. This documents what has actually been built,
+Status as of 2026-08-31. This documents what has actually been built,
 verified, and decided so far — as a technical companion to `README.md`
 (the public project pitch) and `plan.md` (the day-by-day personal plan,
 kept local/gitignored). Where a decision involved a real trade-off or a
@@ -14,11 +14,11 @@ bug was caught, it's recorded here so the reasoning isn't lost.
 | Days 1–2 — data loading & task definition | Done |
 | Day 3 — evaluation harness | Done |
 | Days 4–5 — baselines | Done |
-| Days 6–8 — sequence model | Not started |
+| Days 6–8 — sequence model | Done |
 | Day 9 — error analysis | Not started |
 | Days 10–12 — writeup, polish, buffer | Not started |
 
-All 39 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
+All 44 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
 
 ## 1. Repository and environment
 
@@ -227,7 +227,76 @@ shared-validity-mask-across-horizons case), a skip-guarded real-data count
 check, exact hand-computed linear-extrapolation cases, and a Ridge smoke
 test confirming it beats a constant-mean baseline on synthetic data.
 
-## 5. Known simplifications / limitations so far
+## 5. Sequence model (Days 6–8)
+
+Chosen with the user: **LSTM** (plan's first-listed option; a Transformer
+stayed explicitly out of scope), trained **pooled** across all 12 patients
+(over per-patient or "both") for far more effective training data and
+because it's the standard approach in the CGM-forecasting literature,
+evaluated **per-patient** at test time so the comparison against
+per-patient ridge stays apples-to-apples.
+
+**Architecture — `glucose_prediction/models/sequence.py`** (new):
+`LSTMForecaster` is a single shared LSTM encoder (`input_size=1`,
+glucose-lag-only, matching the baselines exactly) feeding one `Linear`
+head with 2 outputs (30min and 60min predicted simultaneously) — more
+parameter-efficient than training two separate models. Hidden size was
+**measured, not guessed**: benchmarked 16/32/64 at `num_layers=1` and got
+best validation RMSE 28.85/28.94/28.95 — differences within noise across a
+13x parameter range, so bigger doesn't help here. Picked `hidden_size=32`
+(4,546 params) as a defensible modest middle choice; this measurement
+itself is the evidence that the ceiling is the glucose-only-lag-feature
+task, not model capacity. No dropout (`num_layers=1` makes PyTorch's LSTM
+dropout a no-op anyway; ~4.5k params against ~102k training rows plus
+early stopping keeps overfitting risk low).
+
+**Data pipeline**: reuses `windowing.make_windows` as-is. A chronological
+15%-tail-per-patient validation split is taken from each patient's TRAIN
+file *before* pooling (so no cross-patient or in-time leakage), then
+pooled across all 12 patients: **102,442** pooled training windows, 18,079
+pooled validation windows, 28,162 pooled test windows (evaluated
+per-patient). Normalization: a single `mu=157.686, sigma=60.182` computed
+only from pooled training glucose values, applied identically to
+validation/test, predictions un-normalized back to mg/dL before hitting
+the harness. **This exact un-normalization step was explicitly verified**
+during design (a real bug class: normalized-space predictions look like
+near-zero-mean noise, not mg/dL) and is now a permanent unit test.
+
+**Training**: `nn.MSELoss()` over both horizon outputs jointly (same
+`mu/sigma`, so no horizon-specific weighting needed), Adam `lr=1e-3` (no
+tuning needed — convergence was smooth), batch size 256, early stopping
+patience=5 on pooled validation RMSE, `max_epochs=50`. Real run: stopped
+at epoch 19, best val RMSE 28.941, ~47 seconds total wall-clock on this
+CPU-only machine (`torch.cuda.is_available()` is `False`) — confirmed
+stable across 3 random seeds during design verification (epochs 19/27/20,
+final RMSE within a tight 19.29–19.37 / 32.63–32.74 range).
+
+**Runner — `scripts/run_sequence_model.py`**: mirrors `run_baselines.py`'s
+shape (per-patient DataFrame + mean±std summary, saved under
+`RESULTS_DIR`). Real results (mean ± std RMSE/MAE across the 12 patients):
+
+| horizon | persistence | linear extrap. | ridge | **lstm_pooled** |
+|---|---|---|---|---|
+| 30min RMSE | 23.18±2.83 | 38.08±5.65 | 19.85±2.30 | **19.37±2.17** |
+| 60min RMSE | 37.99±4.62 | 59.23±8.61 | 33.56±3.82 | **32.74±3.55** |
+| 30min MAE | 16.78±1.99 | 27.42±3.83 | 14.24±1.54 | **13.89±1.58** |
+| 60min MAE | 28.13±3.36 | 43.26±6.26 | 25.25±3.04 | **24.58±2.82** |
+
+**Honest framing**: the LSTM beats ridge, and this held up across 3 seeds
+(not a fluke), but the win is modest (~0.5 RMSE, ~2–3% relative) and *not*
+universal per-patient (wins on 10–12 of 12 patients depending on
+seed/horizon) — a narrower, less uniform win than ridge's clean 12/12
+sweep over persistence. Read: a 24-step lag window carries limited
+information regardless of which model reads it, and ridge was already
+close to that ceiling. Reported as-is, not rounded up to "the LSTM wins."
+
+**5 new tests** in `tests/test_sequence.py`: forward-pass shape,
+normalize/denormalize round-trip (the un-normalization correctness check
+above, made permanent), chronological-split ordering/sizing, a synthetic
+training-reduces-loss smoke test, and a skip-guarded real-data smoke test
+on 2 patients with a reduced training budget.
+
+## 6. Known simplifications / limitations so far
 
 (Candidates for the eventual README limitations section, Days 10–11.)
 
@@ -242,15 +311,24 @@ test confirming it beats a constant-mean baseline on synthetic data.
   well-precedented grid.
 - CGM gaps are marked, not imputed — dropped entirely at window-building
   time rather than interpolated.
-- Baselines use glucose history only, no insulin/carbs — a deliberate
-  scope boundary to keep the three-way comparison apples-to-apples;
-  insulin/carbs as model inputs is deferred to the deep-model stage.
-- Ridge uses default `alpha=1.0`, no hyperparameter search — appropriate
-  for a baseline, not for the eventual deep model.
+- Baselines and the LSTM both use glucose history only, no insulin/carbs —
+  a deliberate scope boundary to keep the whole comparison apples-to-apples;
+  insulin/carbs as model inputs is deferred to future work.
+- Ridge uses default `alpha=1.0`; the LSTM uses one hidden size chosen from
+  a 3-point sweep (16/32/64) — no broader hyperparameter search on either,
+  appropriate for a "keep it modest" baseline/first-pass model.
+- LSTM early stopping monitors one **pooled** validation RMSE across all
+  12 patients combined, not per-patient — a single shared stopping point.
+- A single global normalization (`mu`/`sigma`) is used for the pooled
+  LSTM rather than per-patient normalization — consistent with the
+  "one shared pooled model" design, but means patients with unusually
+  high/low glucose ranges are normalized identically to everyone else.
+- The LSTM's win over ridge is real but narrow and not universal
+  per-patient (see above) — worth surfacing honestly, not smoothing over.
 
-## 6. Not yet started
+## 7. Not yet started
 
-- Sequence model (LSTM/GRU, optionally a small Transformer) — Days 6–8.
-- Error analysis by regime (postprandial, overnight, hypoglycemia) — Day 9.
+- Error analysis by regime (postprandial, overnight, hypoglycemia), and
+  per-patient identification of where the LSTM loses to ridge — Day 9.
 - Results table, Clarke-grid figure, README results/limitations sections,
   final polish — Days 10–12.
