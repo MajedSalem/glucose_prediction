@@ -18,7 +18,7 @@ bug was caught, it's recorded here so the reasoning isn't lost.
 | Day 9 — error analysis | Done |
 | Days 10–12 — writeup, polish, buffer | Not started |
 
-All 49 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
+All 54 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
 
 ## 1. Repository and environment
 
@@ -88,7 +88,7 @@ XML into a clean 5-minute-grid `DataFrame` with columns `glucose` (mg/dL),
   window, converted to a dose per 5-minute interval, then summed with
   bolus doses. Bolus dose is spread as a constant-rate delivery across
   each event's `[ts_begin, ts_end)` window, proportional to how much of
-  each 5-minute bucket it overlaps (`_distribute_bolus`, added 2026-09-01
+  each 5-minute bucket it overlaps (`_distribute_bolus`, added 2026-08-31
   — originally dumped the whole dose into the single nearest bucket).
   Verified across all 12 patients: 245 of 3,733 real bolus events (6.6%)
   are extended ("normal dual"/"square dual", durations 30–60 min, not
@@ -406,7 +406,7 @@ hypoglycemia threshold matching `metrics.classify_range`'s own convention.
 (Candidates for the eventual README limitations section, Days 10–11.)
 
 - ~~Bolus dose treated as instantaneous at `ts_begin`~~ **Fixed
-  2026-09-01**: now spread proportionally across the bucket(s) each
+  2026-08-31**: now spread proportionally across the bucket(s) each
   bolus's real `[ts_begin, ts_end)` window overlaps. Residual
   simplification: a "dual" bolus's true two-component (immediate +
   extended) profile isn't recoverable from this dataset's schema, so the
