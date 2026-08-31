@@ -15,10 +15,10 @@ bug was caught, it's recorded here so the reasoning isn't lost.
 | Day 3 — evaluation harness | Done |
 | Days 4–5 — baselines | Done |
 | Days 6–8 — sequence model | Done |
-| Day 9 — error analysis | Not started |
+| Day 9 — error analysis | Done |
 | Days 10–12 — writeup, polish, buffer | Not started |
 
-All 44 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
+All 49 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
 
 ## 1. Repository and environment
 
@@ -296,7 +296,98 @@ above, made permanent), chronological-split ordering/sizing, a synthetic
 training-reduces-loss smoke test, and a skip-guarded real-data smoke test
 on 2 patients with a reduced training budget.
 
-## 6. Known simplifications / limitations so far
+## 6. Error analysis by clinical regime (Day 9)
+
+Pure analysis on top of already-built infrastructure — no new models, no
+new metrics. **Key structural finding that shaped the whole design**: for
+the hypoglycemia-true subset (`y_true < 70`), Clarke zones B and C are
+mathematically impossible (verified by tracing the zone formulas by hand
+and empirically — exactly `0.0%` in every real hypoglycemia row). So "does
+it miss lows?" is already fully answered by the existing `zone_A/D/E_pct`
+columns on that subset: zone A is the hit rate, zone D is "missed, called
+normal," zone E is "missed, called high" — no new metric code needed at
+all, only slicing.
+
+**`glucose_prediction/evaluation/regimes.py`** (new): `postprandial_mask`,
+`overnight_mask`, `hypoglycemia_mask` — all anchored at the prediction
+**target time** (`t + horizon_minutes`), not the input window's
+last-observed time, since a meal or a night hour is defined by when the
+prediction lands. Regime definitions chosen from real data, not guessed:
+- **Postprandial** = a meal within the last 120 minutes (inclusive). Real
+  median gap between meals is 300 min; only 13.4% of gaps are under 120
+  min, so this rarely conflates two unrelated meals.
+- **Overnight** = target-time local hour in `[0, 6)`.
+- **Hypoglycemia** = `y_true < 70` at target time (793/796 pooled windows
+  at 30/60min — 2.8% of test windows, small but not degenerate). Patient
+  567's test split has zero recorded meals, contributing 0 postprandial
+  windows for that patient — a footnote, not a bug.
+
+**`scripts/run_error_analysis.py`** (new): reuses `build_pooled_data`,
+`train_lstm`, `predict`, `fit_ridge`, `ridge_predict`,
+`persistence_predict`, `linear_extrapolation_predict`, `make_windows`, and
+`harness.evaluate` as-is — pure slicing/aggregation, zero new metric code.
+Writes 3 CSVs to `results/`: `error_analysis_by_regime.csv` (32 rows: 4
+models × 2 horizons × 4 regimes incl. `overall`), `error_analysis_hypo_
+detection.csv` (8 rows), `error_analysis_lstm_vs_ridge_per_patient.csv`
+(24 rows).
+
+**By-regime RMSE** (pooled across all 12 patients):
+
+| horizon | regime (n) | persistence | linear_extrap | ridge | lstm_pooled |
+|---|---|---|---|---|---|
+| 30min | postprandial (7086) | 28.09 | 42.87 | 24.23 | **23.61** |
+| 30min | overnight (7507) | 15.39 | 23.32 | 14.39 | **13.92** |
+| 30min | hypoglycemia (793) | 16.69 | 31.92 | 16.42 | 20.58 |
+| 60min | postprandial (7016) | 44.51 | 63.24 | 39.51 | **38.81** |
+| 60min | overnight (7457) | 25.67 | 37.52 | 25.35 | **24.17** |
+| 60min | hypoglycemia (796) | 35.29 | 56.27 | 37.69 | 41.34 |
+
+**"Does it miss lows?"** — hit rate (zone A), missed→normal (zone D),
+missed→high/dangerous (zone E), within the hypoglycemia-true subset:
+
+| model | horizon | hit_rate | missed→normal | missed→high |
+|---|---|---|---|---|
+| persistence | 30 | **71.75%** | 28.25% | 0.00% |
+| linear_extrapolation | 30 | 82.09% | 17.65% | 0.25% |
+| ridge | 30 | 57.76% | 42.24% | 0.00% |
+| **lstm_pooled** | 30 | **25.98%** | **74.02%** | 0.00% |
+| persistence | 60 | **47.11%** | 51.88% | 1.01% |
+| linear_extrapolation | 60 | 73.49% | 21.98% | 4.52% |
+| ridge | 60 | 7.66% | 92.21% | 0.13% |
+| **lstm_pooled** | 60 | **0.63%** | **99.25%** | 0.13% |
+
+**LSTM vs ridge, per patient** (overall RMSE): LSTM wins 21/24
+(patient, horizon) pairs. Loses at 567 (30min), 570 (60min), 584 (60min).
+
+**The headline finding — this is the one to lead with in the writeup, not
+bury**: the LSTM's RMSE edge over ridge is real and holds in *both* the
+postprandial and overnight regimes (not a one-subset fluke). But on the
+safety-critical question, accuracy and hypo-sensitivity move in **opposite
+directions**: the model with the best average RMSE (LSTM) is dramatically
+the *worst* at catching a real low, and this gets worse — not better — at
+the longer horizon (26% hit rate at 30min, a mere **0.6%** at 60min) versus
+persistence's 72%/47%. This is a textbook regression-to-the-mean effect:
+hypoglycemia is only ~2.8% of training windows, so a fitted model (more so
+the higher-capacity LSTM than linear ridge) learns to systematically
+under-predict the depth of downward excursions, minimizing overall RMSE at
+the direct cost of ever crossing the 70 mg/dL line. Reassuringly, the most
+dangerous failure mode (Zone E — predicting high when truly low) stays
+rare throughout (0–4.5%) — the dominant risk is Zone D (silently calling a
+real low "normal"), not an active reversal. Linear extrapolation's
+apparently-best hit rate is a "right for the wrong reason" artifact (its
+already-documented per-window OLS overshoot happens to frequently cross
+below 70 during a real downward trend) and is reported with that caveat,
+not touted as "safest." **Net: the naive persistence baseline is the most
+clinically sensitive detector of real hypoglycemia among all four
+predictors** — this is exactly the failure-mode honesty Day 9 exists to
+surface.
+
+**5 new tests** in `tests/test_regimes.py`: exact boundary-inclusive
+postprandial-lookback cases, the no-meals-ever case, a target with no
+earlier history at all, half-open overnight-hour boundaries, and the
+hypoglycemia threshold matching `metrics.classify_range`'s own convention.
+
+## 7. Known simplifications / limitations so far
 
 (Candidates for the eventual README limitations section, Days 10–11.)
 
@@ -325,10 +416,18 @@ on 2 patients with a reduced training budget.
   high/low glucose ranges are normalized identically to everyone else.
 - The LSTM's win over ridge is real but narrow and not universal
   per-patient (see above) — worth surfacing honestly, not smoothing over.
+- **The LSTM (and to a lesser extent ridge) is meaningfully worse than
+  naive persistence at detecting real hypoglycemia**, despite having the
+  best average RMSE — a regression-to-the-mean effect from hypoglycemia
+  being ~2.8% of training data. A hypo-weighted loss (already on plan.md's
+  own "what I'd do next" list) would directly target this, not implemented
+  here — this project reports the failure mode rather than papering over
+  it with a leaderboard-only view of RMSE.
+- Regime definitions (120min postprandial lookback, `[0,6)` overnight) are
+  one reasonable, data-justified choice each, not the only valid one.
 
-## 7. Not yet started
+## 8. Not yet started
 
-- Error analysis by regime (postprandial, overnight, hypoglycemia), and
-  per-patient identification of where the LSTM loses to ridge — Day 9.
 - Results table, Clarke-grid figure, README results/limitations sections,
-  final polish — Days 10–12.
+  final polish — Days 10–12. The Day 9 hypo-detection finding should be
+  the headline of the writeup, not a footnote.
