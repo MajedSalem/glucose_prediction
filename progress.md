@@ -86,10 +86,24 @@ XML into a clean 5-minute-grid `DataFrame` with columns `glucose` (mg/dL),
 - Insulin: `basal` rate is forward-filled onto the grid (`merge_asof`,
   `direction="backward"`), overridden by `temp_basal` during its active
   window, converted to a dose per 5-minute interval, then summed with
-  bolus doses. **Known simplification**: bolus dose is treated as
-  delivered instantaneously at `ts_begin`, even for the ~30-minute
-  extended ("dual"/"square") boluses — flagged in the module docstring as
-  a candidate future refinement, not hidden.
+  bolus doses. Bolus dose is spread as a constant-rate delivery across
+  each event's `[ts_begin, ts_end)` window, proportional to how much of
+  each 5-minute bucket it overlaps (`_distribute_bolus`, added 2026-09-01
+  — originally dumped the whole dose into the single nearest bucket).
+  Verified across all 12 patients: 245 of 3,733 real bolus events (6.6%)
+  are extended ("normal dual"/"square dual", durations 30–60 min, not
+  always clean 5-min multiples — some are 32.9, 33.4 min etc., so the
+  implementation computes real interval overlap rather than assuming grid
+  alignment); the rest are instantaneous and fall back to nearest-bucket
+  assignment (same tolerance as `_align_glucose`'s CGM matching). **Known
+  simplification, still present**: a real "dual" bolus actually has two
+  components (an immediate normal dose plus an extended square dose), but
+  only a single total `dose` is recorded in this dataset's schema — the
+  whole amount is treated as one uniform-rate delivery, not the true
+  split profile. This only affects `insulin_u`, an unused column: neither
+  the baselines, the LSTM, nor the Day 9 error analysis use `insulin_u`
+  or `carbs_g` (glucose-lag-only by design, see Days 4-5/6-8), so none of
+  those already-reported numbers changed when this was fixed.
 - Carbs: summed per 5-minute bucket by rounding each meal's timestamp to
   the nearest grid point.
 
@@ -391,8 +405,12 @@ hypoglycemia threshold matching `metrics.classify_range`'s own convention.
 
 (Candidates for the eventual README limitations section, Days 10–11.)
 
-- Bolus dose treated as instantaneous at `ts_begin`; ~30-minute extended
-  boluses aren't spread over their actual delivery window.
+- ~~Bolus dose treated as instantaneous at `ts_begin`~~ **Fixed
+  2026-09-01**: now spread proportionally across the bucket(s) each
+  bolus's real `[ts_begin, ts_end)` window overlaps. Residual
+  simplification: a "dual" bolus's true two-component (immediate +
+  extended) profile isn't recoverable from this dataset's schema, so the
+  whole dose is modeled as one uniform-rate delivery.
 - Only `glucose_level`, `meal`, `basal`, `temp_basal`, `bolus` streams are
   used; sleep/exercise/stress/heart-rate/skin-temperature streams present
   in the data are not (not part of the task definition).

@@ -6,14 +6,20 @@ carbs). Gaps in CGM are marked (glucose_missing), never silently filled;
 deciding how to handle them for modeling is a windowing-time concern, not
 this loader's.
 
-Bolus dose is treated as delivered instantaneously at ts_begin. Most boluses
-are (confirmed against the real data), but "normal dual"/"square dual"
-boluses actually spread dose over ~30 minutes -- proportional spreading is
-a possible future refinement, not implemented here.
+Bolus dose is spread as a constant-rate delivery across each event's
+[ts_begin, ts_end) window, proportional to how much of each 5-minute
+bucket that window overlaps. Most boluses are instantaneous
+(ts_begin == ts_end) and land entirely in one bucket; "normal dual"/
+"square dual" boluses have a real duration (30-60 min, confirmed against
+all 12 patients) and get spread across it. The true normal/square split
+within a "dual" bolus isn't recoverable from this dataset's schema (only
+a single total `dose` is recorded), so the whole dose is treated as one
+uniform-rate delivery -- a documented approximation, not the true profile.
 """
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from glucose_prediction.config import DATA_RAW_DIR, SAMPLING_INTERVAL_MINUTES
@@ -75,6 +81,38 @@ def _bucket_sum(grid: pd.DatetimeIndex, timestamps: pd.Series, values: pd.Series
     return summed.reindex(grid, fill_value=0.0)
 
 
+def _distribute_bolus(grid: pd.DatetimeIndex, bolus_df: pd.DataFrame) -> np.ndarray:
+    """Spread each bolus dose across the 5-minute buckets its [ts_begin, ts_end)
+    window overlaps, proportional to overlap duration (a constant-rate delivery
+    assumption). Instantaneous boluses (ts_begin == ts_end) fall back to
+    nearest-bucket assignment, matching the same tolerance _align_glucose uses.
+    """
+    dose_per_bucket = np.zeros(len(grid))
+    if bolus_df.empty:
+        return dose_per_bucket
+
+    grid_starts = grid.values
+    grid_ends = grid_starts + np.timedelta64(SAMPLING_INTERVAL_MINUTES, "m")
+    tolerance = pd.Timedelta(minutes=SAMPLING_INTERVAL_MINUTES / 2)
+
+    for _, event in bolus_df.iterrows():
+        ts_begin, ts_end, dose = event["ts_begin"], event["ts_end"], event["dose"]
+        duration_minutes = (ts_end - ts_begin) / pd.Timedelta(minutes=1)
+
+        if duration_minutes <= 0:
+            nearest = grid.get_indexer([ts_begin], method="nearest", tolerance=tolerance)
+            if nearest[0] != -1:
+                dose_per_bucket[nearest[0]] += dose
+            continue
+
+        overlap_start = np.maximum(grid_starts, np.datetime64(ts_begin))
+        overlap_end = np.minimum(grid_ends, np.datetime64(ts_end))
+        overlap_minutes = np.clip((overlap_end - overlap_start) / np.timedelta64(1, "m"), 0, None)
+        dose_per_bucket += dose * (overlap_minutes / duration_minutes)
+
+    return dose_per_bucket
+
+
 def _compute_insulin(grid: pd.DatetimeIndex, basal_df: pd.DataFrame,
                       temp_basal_df: pd.DataFrame, bolus_df: pd.DataFrame) -> pd.Series:
     interval_hours = SAMPLING_INTERVAL_MINUTES / 60
@@ -92,9 +130,8 @@ def _compute_insulin(grid: pd.DatetimeIndex, basal_df: pd.DataFrame,
         rate[mask] = tb["value"]
 
     basal_dose = rate * interval_hours
-    bolus_dose = _bucket_sum(grid, bolus_df.get("ts_begin", pd.Series(dtype="datetime64[ns]")),
-                              bolus_df.get("dose", pd.Series(dtype=float)))
-    return basal_dose.to_numpy() + bolus_dose.to_numpy()
+    bolus_dose = _distribute_bolus(grid, bolus_df)
+    return basal_dose.to_numpy() + bolus_dose
 
 
 def load_patient(patient_id: str, split: str = "train", root: Path = DEFAULT_ROOT) -> pd.DataFrame:
