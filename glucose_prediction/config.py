@@ -6,6 +6,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_RAW_DIR = ROOT_DIR / "data" / "raw"
 DATA_PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 RESULTS_DIR = ROOT_DIR / "results"
+FIGURES_DIR = ROOT_DIR / "docs" / "figures"
 
 # Resample CGM streams to this grid before windowing.
 SAMPLING_INTERVAL_MINUTES = 5
