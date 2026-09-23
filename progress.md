@@ -1,6 +1,6 @@
 # Progress Log
 
-Status as of 2026-08-31. This documents what has actually been built,
+Status as of 2026-09-23. This documents what has actually been built,
 verified, and decided so far — as a technical companion to `README.md`
 (the public project pitch) and `plan.md` (the day-by-day personal plan,
 kept local/gitignored). Where a decision involved a real trade-off or a
@@ -16,7 +16,8 @@ bug was caught, it's recorded here so the reasoning isn't lost.
 | Days 4–5 — baselines | Done |
 | Days 6–8 — sequence model | Done |
 | Day 9 — error analysis | Done |
-| Days 10–12 — writeup, polish, buffer | Not started |
+| Days 10–11 — writeup | Done |
+| Day 12 — buffer/stretch | Not started |
 
 All 54 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
 
@@ -444,8 +445,66 @@ hypoglycemia threshold matching `metrics.classify_range`'s own convention.
 - Regime definitions (120min postprandial lookback, `[0,6)` overnight) are
   one reasonable, data-justified choice each, not the only valid one.
 
-## 8. Not yet started
+## 8. Writeup (Days 10–11)
 
-- Results table, Clarke-grid figure, README results/limitations sections,
-  final polish — Days 10–12. The Day 9 hypo-detection finding should be
-  the headline of the writeup, not a footnote.
+Pure presentation on top of already-built, already-verified infrastructure —
+no new metrics, no new training logic, no numbers that weren't already
+reported above.
+
+**`scripts/generate_report.py`** (new): prints copy-paste markdown tables
+(headline RMSE/MAE read straight from `results/baselines_summary.csv` /
+`sequence_model_summary.csv`, plus the regime and hypo-detection tables via
+`run_error_analysis`'s own `collect_predictions`/`pooled_regime_table`/
+`hypo_detection_table` — imported and reused, not reimplemented) and renders
+the Clarke-grid figure to `docs/figures/clarke_grid.png`.
+
+- **Figure design decision**: `clarke.py` never exposed the Clarke zone
+  boundary lines as coordinates, only inline priority-ordered inequality
+  masks inside `clarke_zones()`. Hand-transcribing "standard" published
+  boundary coordinates risked a silent mismatch with this repo's specific
+  implementation. Instead, the figure's zone background is rendered by
+  calling `clarke_zones()` itself on a dense 300×300 mesh grid (0–400
+  mg/dL) and coloring each pixel by its returned zone — guaranteed
+  pixel-consistent with the real classifier. The pooled test predictions
+  are scattered on top (small markers, low alpha, ~28k points per panel,
+  no subsampling).
+- **Figure content** (confirmed with the user): a 2×2 grid — rows
+  `persistence` vs `lstm_pooled`, columns 30min vs 60min — rather than a
+  generic single "predicted vs actual" plot, so the figure itself carries
+  Day 9's headline finding (the LSTM's hypo-detection collapse at 60min).
+- **Figure location**: `docs/figures/`, not `results/figures/` — `results/`
+  is gitignored (`results/*` / `!results/.gitkeep`) since it's derived
+  output from DUA-restricted data, but the aggregate, non-patient-identifiable
+  Clarke-grid figure needs to actually be committed for the public README to
+  display it, so it lives in a new top-level `docs/` dir untouched by any
+  existing gitignore rule.
+- No dedicated test file added, matching the existing precedent that
+  `run_error_analysis.py` (its closest sibling — also pure aggregation over
+  already-tested functions) has none either. Verified instead by running
+  the script and cross-checking its printed numbers against the
+  already-published tables above (exact match) and visually inspecting the
+  figure.
+
+**`README.md`**: added `## Results` (headline table, the hypo-detection
+finding led as the headline per `progress.md`'s own instruction — not
+buried — the Clarke-grid figure, and the by-regime table), `## Limitations`,
+and `## What's next`, and rewrote `## Status`. Also fixed two stale spots
+caught while editing: the `## Setup` section referenced
+`python -m scripts.generate_synthetic_data`, a script that was never built
+(leftover from the original scaffold), and the `## Data` section described
+the `simglucose` fallback as if it were actually used, when in fact it was
+never wired up (real data arrived immediately, see §2 above) — corrected to
+say so honestly rather than leaving stale/aspirational text in a "finished"
+README.
+
+**`glucose_prediction/config.py`**: added `FIGURES_DIR = ROOT_DIR / "docs" / "figures"`,
+matching the existing "config centralizes paths" convention.
+
+54/54 tests still pass — no existing module was modified, only additive
+(one new script, one new config constant, README/docs changes).
+
+## 9. Not yet started
+
+- Day 12 buffer/stretch (optional, not required for the project to be
+  considered finished): a simple controller in `simglucose`, or a
+  Kalman-plus-LSTM hybrid.
