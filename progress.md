@@ -17,7 +17,7 @@ bug was caught, it's recorded here so the reasoning isn't lost.
 | Days 6–8 — sequence model | Done |
 | Day 9 — error analysis | Done |
 | Days 10–11 — writeup | Done |
-| Day 12 — buffer/stretch | Not started |
+| Day 12 — buffer/stretch | Deliberately dropped, not attempted |
 
 All 54 tests pass (`.venv/Scripts/python -m pytest tests/ -v`).
 
@@ -503,8 +503,13 @@ matching the existing "config centralizes paths" convention.
 54/54 tests still pass — no existing module was modified, only additive
 (one new script, one new config constant, README/docs changes).
 
-## 9. Not yet started
+## 9. Day 12 (buffer/stretch) deliberately dropped
 
-- Day 12 buffer/stretch (optional, not required for the project to be
-  considered finished): a simple controller in `simglucose`, or a
-  Kalman-plus-LSTM hybrid.
+The plan's original Day 12 buffer slot (a simple controller in `simglucose`,
+or a Kalman-plus-LSTM hybrid) was considered and skipped on purpose, not
+deferred. The project's honest, finished, small-and-complete framing is
+itself the selling point; bolting on a rushed stretch feature at the end
+would dilute that rather than add to it. The project is considered
+finished as of Day 11. (Both ideas remain listed as general future-work
+directions in `README.md`'s "What's next" section — that's a different,
+lower-stakes thing than tracking them as an open plan item.)

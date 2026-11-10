@@ -1,5 +1,7 @@
 # Glucose Prediction (OhioT1DM)
 
+[![tests](https://github.com/MajedSalem/glucose_prediction/actions/workflows/tests.yml/badge.svg)](https://github.com/MajedSalem/glucose_prediction/actions/workflows/tests.yml)
+
 Blood-glucose forecasting for type 1 diabetes, benchmarking classical time-series
 baselines against a deep sequence model, with a clinically framed evaluation.
 
@@ -224,10 +226,28 @@ Full per-patient tables and additional verification detail are in
 
 ## Status
 
-Complete through the writeup stage: data pipeline, evaluation harness,
-three baselines, a pooled LSTM, clinical-regime error analysis, and this
-results/limitations writeup are all built, tested, and reported above. Not
-attempted: the closed-loop-controller stretch goal above.
+Complete: data pipeline, evaluation harness, three baselines, a pooled
+LSTM, clinical-regime error analysis, and this results/limitations writeup
+are all built, tested, and reported above.
+
+## Citation
+
+This project uses the OhioT1DM Dataset. If you build on this work, please
+cite the dataset itself (per the dataset authors' own request):
+
+> Marling, C., & Bunescu, R. (2020). The OhioT1DM Dataset for Blood Glucose
+> Level Prediction: Update 2020. *CEUR Workshop Proceedings*, 2675, 71–74.
+
+```bibtex
+@article{marling2020ohiot1dm,
+  title   = {The OhioT1DM Dataset for Blood Glucose Level Prediction: Update 2020},
+  author  = {Marling, Cindy and Bunescu, Razvan},
+  journal = {CEUR Workshop Proceedings},
+  volume  = {2675},
+  pages   = {71--74},
+  year    = {2020}
+}
+```
 
 ## License
 
